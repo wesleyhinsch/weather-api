@@ -1,0 +1,95 @@
+name: Deploy to OCI
+
+on:
+  push:
+    branches: [main]
+
+env:
+  OCI_REGION: ${{ secrets.OCI_REGION }}
+  OCIR_REGISTRY: ${{ secrets.OCI_REGION }}.ocir.io
+  OCIR_REPOSITORY: ${{ secrets.OCI_TENANCY_NAMESPACE }}/weather-api
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to OCIR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.OCIR_REGISTRY }}
+          username: ${{ secrets.OCI_TENANCY_NAMESPACE }}/${{ secrets.OCI_USERNAME }}
+          password: ${{ secrets.OCI_AUTH_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.OCIR_REGISTRY }}/${{ env.OCIR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+            ${{ env.OCIR_REGISTRY }}/${{ env.OCIR_REPOSITORY }}:latest
+
+      - name: Install OCI CLI
+        run: |
+          pip install oci-cli
+
+      - name: Configure OCI CLI
+        run: |
+          mkdir -p ~/.oci
+          echo "${{ secrets.OCI_PRIVATE_KEY }}" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
+          cat <<EOF > ~/.oci/config
+          [DEFAULT]
+          user=${{ secrets.OCI_USER_OCID }}
+          fingerprint=${{ secrets.OCI_FINGERPRINT }}
+          tenancy=${{ secrets.OCI_TENANCY_OCID }}
+          region=${{ secrets.OCI_REGION }}
+          key_file=~/.oci/oci_api_key.pem
+          EOF
+
+      - name: Deploy to Container Instance
+        run: |
+          # Deleta a instância anterior (se existir)
+          EXISTING=$(oci container-instances container-instance list \
+            --compartment-id ${{ secrets.OCI_COMPARTMENT_OCID }} \
+            --display-name weather-api \
+            --lifecycle-state ACTIVE \
+            --query 'data.items[0].id' --raw-output 2>/dev/null || true)
+
+          if [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ]; then
+            oci container-instances container-instance delete \
+              --container-instance-id "$EXISTING" --force
+            echo "Aguardando exclusão..."
+            sleep 30
+          fi
+
+          # Cria nova instância
+          oci container-instances container-instance create \
+            --compartment-id ${{ secrets.OCI_COMPARTMENT_OCID }} \
+            --availability-domain ${{ secrets.OCI_AVAILABILITY_DOMAIN }} \
+            --shape CI.Standard.E4.Flex \
+            --shape-config '{"memoryInGBs": 4, "ocpus": 1}' \
+            --display-name weather-api \
+            --containers "[
+              {
+                \"displayName\": \"weather-api\",
+                \"imageUrl\": \"${{ env.OCIR_REGISTRY }}/${{ env.OCIR_REPOSITORY }}:${{ env.IMAGE_TAG }}\",
+                \"resourceConfig\": {\"memoryLimitInGBs\": 4, \"vcpusLimit\": 1}
+              }
+            ]" \
+            --vnics "[
+              {
+                \"subnetId\": \"${{ secrets.OCI_SUBNET_OCID }}\"
+              }
+            ]" \
+            --image-pull-secrets "[
+              {
+                \"registryEndpoint\": \"${{ env.OCIR_REGISTRY }}\",
+                \"secretType\": \"BASIC\",
+                \"username\": \"${{ secrets.OCI_TENANCY_NAMESPACE }}/${{ secrets.OCI_USERNAME }}\",
+                \"password\": \"${{ secrets.OCI_AUTH_TOKEN }}\"
+              }
+            ]"
