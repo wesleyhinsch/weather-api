@@ -1,45 +1,22 @@
 package com.weather.api.infrastructure.adapter.inbound.rest;
 
 import com.weather.api.domain.model.WeatherForecast;
-import com.weather.api.domain.port.WeatherServicePort;
+import com.weather.api.domain.port.WeatherProviderPort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/forecast")
 public class WeatherController {
 
-    private final WeatherServicePort weatherService;
+    private final WeatherProviderPort weatherProvider;
 
-    public WeatherController(WeatherServicePort weatherService) {
-        this.weatherService = weatherService;
+    public WeatherController(WeatherProviderPort weatherProvider) {
+        this.weatherProvider = weatherProvider;
     }
 
-    @PostMapping
-    public ResponseEntity<WeatherForecast> create(@RequestBody WeatherForecast forecast) {
-        return ResponseEntity.ok(weatherService.create(forecast));
-    }
-
-    @GetMapping("/{id}")
-    public ResponseEntity<WeatherForecast> getById(@PathVariable Long id) {
-        return weatherService.getById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
-    }
-
-    @GetMapping
-    public ResponseEntity<List<WeatherForecast>> getByCity(@RequestParam(required = false) String city) {
-        if (city != null) {
-            return ResponseEntity.ok(weatherService.getByCity(city));
-        }
-        return ResponseEntity.ok(weatherService.getAll());
-    }
-
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
-        weatherService.delete(id);
-        return ResponseEntity.noContent().build();
+    @GetMapping("/current")
+    public ResponseEntity<WeatherForecast> getCurrentWeather(@RequestParam String city, @RequestParam String uf) {
+        return ResponseEntity.ok(weatherProvider.getCurrentWeather(city, uf));
     }
 }

@@ -1,32 +1,29 @@
 package com.weather.api.domain.model;
 
-import java.time.LocalDateTime;
+import java.util.List;
 
 public class WeatherForecast {
 
-    private Long id;
     private String city;
-    private Double temperature;
-    private String description;
-    private LocalDateTime forecastDate;
+    private String uf;
+    private String summary;
+    private Double tempMin;
+    private Double tempMax;
+    private boolean willRain;
+    private List<ForecastPeriod> periods;
 
-    public WeatherForecast() {}
-
-    public WeatherForecast(String city, Double temperature, String description, LocalDateTime forecastDate) {
-        this.city = city;
-        this.temperature = temperature;
-        this.description = description;
-        this.forecastDate = forecastDate;
-    }
-
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
     public String getCity() { return city; }
     public void setCity(String city) { this.city = city; }
-    public Double getTemperature() { return temperature; }
-    public void setTemperature(Double temperature) { this.temperature = temperature; }
-    public String getDescription() { return description; }
-    public void setDescription(String description) { this.description = description; }
-    public LocalDateTime getForecastDate() { return forecastDate; }
-    public void setForecastDate(LocalDateTime forecastDate) { this.forecastDate = forecastDate; }
+    public String getUf() { return uf; }
+    public void setUf(String uf) { this.uf = uf; }
+    public String getSummary() { return summary; }
+    public void setSummary(String summary) { this.summary = summary; }
+    public Double getTempMin() { return tempMin; }
+    public void setTempMin(Double tempMin) { this.tempMin = tempMin; }
+    public Double getTempMax() { return tempMax; }
+    public void setTempMax(Double tempMax) { this.tempMax = tempMax; }
+    public boolean isWillRain() { return willRain; }
+    public void setWillRain(boolean willRain) { this.willRain = willRain; }
+    public List<ForecastPeriod> getPeriods() { return periods; }
+    public void setPeriods(List<ForecastPeriod> periods) { this.periods = periods; }
 }

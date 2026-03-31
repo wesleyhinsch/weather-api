@@ -4,6 +4,8 @@ server:
 spring:
   application:
     name: weather-api
+
+
   datasource:
     url: jdbc:h2:file:./data/weatherdb
     driver-class-name: org.h2.Driver
@@ -17,6 +19,12 @@ spring:
     console:
       enabled: true
       path: /h2-console
+
+openweathermap:
+  api-key: ${OPENWEATHERMAP_API_KEY}
+
+telegram:
+  bot-token: ${TELEGRAM_BOT_TOKEN}
 
 springdoc:
   swagger-ui:
