@@ -17,17 +17,9 @@ public class OpenWeatherMapAdapter implements WeatherProviderPort {
 
     private final RestTemplate restTemplate;
     private final String apiKey;
-    private static final String URL = "https://api.openweathermap.org/data/2.5/forecast?q={query},BR&appid={apiKey}&units=metric&lang=pt_br";
+    private static final String FORECAST_URL = "https://api.openweathermap.org/data/2.5/forecast?q={query},BR&appid={apiKey}&units=metric&lang=pt_br";
+    private static final String CURRENT_URL = "https://api.openweathermap.org/data/2.5/weather?q={query},BR&appid={apiKey}&units=metric&lang=pt_br";
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-
-    private static final Map<Integer, String> PERIOD_LABELS = Map.of(
-            6, "Manhã",
-            12, "Tarde",
-            18, "Noite",
-            21, "Noite"
-    );
-
-    private static final List<Integer> TARGET_HOURS = List.of(6, 12, 18, 21);
 
     public OpenWeatherMapAdapter(RestTemplate restTemplate, @Value("${openweathermap.api-key}") String apiKey) {
         this.restTemplate = restTemplate;
@@ -38,11 +30,17 @@ public class OpenWeatherMapAdapter implements WeatherProviderPort {
     @SuppressWarnings("unchecked")
     public WeatherForecast getCurrentWeather(String city, String uf) {
         String query = city + "," + uf;
-        Map<String, Object> response = restTemplate.getForObject(URL, Map.class, query, apiKey);
-        List<Map<String, Object>> list = (List<Map<String, Object>>) response.get("list");
+
+        Map<String, Object> current = restTemplate.getForObject(CURRENT_URL, Map.class, query, apiKey);
+        Map<String, Object> currentMain = (Map<String, Object>) current.get("main");
+        Map<String, Object> currentWeather = ((List<Map<String, Object>>) current.get("weather")).get(0);
+        String currentDesc = (String) currentWeather.get("description");
+        String currentMainType = ((String) currentWeather.get("main")).toLowerCase();
+
+        Map<String, Object> forecast = restTemplate.getForObject(FORECAST_URL, Map.class, query, apiKey);
+        List<Map<String, Object>> list = (List<Map<String, Object>>) forecast.get("list");
 
         LocalDate today = LocalDate.now();
-
         List<ForecastPeriod> allPeriods = list.stream()
                 .filter(item -> {
                     LocalDateTime dt = LocalDateTime.parse((String) item.get("dt_txt"), FORMATTER);
@@ -52,31 +50,56 @@ public class OpenWeatherMapAdapter implements WeatherProviderPort {
                 .toList();
 
         List<ForecastPeriod> periods = new ArrayList<>();
-        for (int targetHour : TARGET_HOURS) {
-            findClosestPeriod(allPeriods, targetHour).ifPresent(p -> {
-                p.setLabel(PERIOD_LABELS.get(targetHour));
-                periods.add(p);
-            });
+        addPeriod(periods, "🌅 Manhã", allPeriods, 6, 11);
+        addPeriod(periods, "☀️ Tarde", allPeriods, 12, 17);
+        addPeriod(periods, "🌙 Noite", allPeriods, 18, 23);
+
+        double tempMin = ((Number) currentMain.get("temp_min")).doubleValue();
+        double tempMax = ((Number) currentMain.get("temp_max")).doubleValue();
+
+        if (!allPeriods.isEmpty()) {
+            double forecastMin = allPeriods.stream().mapToDouble(ForecastPeriod::getTemperature).min().orElse(tempMin);
+            double forecastMax = allPeriods.stream().mapToDouble(ForecastPeriod::getTemperature).max().orElse(tempMax);
+            tempMin = Math.min(tempMin, forecastMin);
+            tempMax = Math.max(tempMax, forecastMax);
         }
 
-        boolean willRain = allPeriods.stream().anyMatch(ForecastPeriod::isRain);
-        double tempMin = allPeriods.stream().mapToDouble(ForecastPeriod::getTemperature).min().orElse(0);
-        double tempMax = allPeriods.stream().mapToDouble(ForecastPeriod::getTemperature).max().orElse(0);
+        boolean willRain = currentMainType.contains("rain") || currentMainType.contains("drizzle")
+                || allPeriods.stream().anyMatch(ForecastPeriod::isRain);
 
-        WeatherForecast forecast = new WeatherForecast();
-        forecast.setCity(city);
-        forecast.setUf(uf);
-        forecast.setTempMin(Math.round(tempMin * 10.0) / 10.0);
-        forecast.setTempMax(Math.round(tempMax * 10.0) / 10.0);
-        forecast.setWillRain(willRain);
-        forecast.setPeriods(periods);
-        forecast.setSummary(buildSummary(city, uf, allPeriods));
-        return forecast;
+        WeatherForecast result = new WeatherForecast();
+        result.setCity(city);
+        result.setUf(uf);
+        result.setTempMin(Math.round(tempMin * 10.0) / 10.0);
+        result.setTempMax(Math.round(tempMax * 10.0) / 10.0);
+        result.setWillRain(willRain);
+        result.setPeriods(periods);
+        result.setSummary(buildSummary(city, uf, currentDesc, tempMin, tempMax, willRain, periods));
+        return result;
     }
 
-    private Optional<ForecastPeriod> findClosestPeriod(List<ForecastPeriod> periods, int targetHour) {
-        return periods.stream()
-                .min(Comparator.comparingInt(p -> Math.abs(p.getDateTime().getHour() - targetHour)));
+    private void addPeriod(List<ForecastPeriod> result, String label, List<ForecastPeriod> allPeriods, int hourStart, int hourEnd) {
+        List<ForecastPeriod> filtered = allPeriods.stream()
+                .filter(p -> p.getDateTime().getHour() >= hourStart && p.getDateTime().getHour() <= hourEnd)
+                .toList();
+
+        if (filtered.isEmpty()) return;
+
+        double avg = filtered.stream().mapToDouble(ForecastPeriod::getTemperature).average().orElse(0);
+        double min = filtered.stream().mapToDouble(ForecastPeriod::getTemperature).min().orElse(0);
+        double max = filtered.stream().mapToDouble(ForecastPeriod::getTemperature).max().orElse(0);
+        boolean rain = filtered.stream().anyMatch(ForecastPeriod::isRain);
+        double rainVolume = filtered.stream().mapToDouble(ForecastPeriod::getRainVolume).sum();
+        String desc = filtered.stream().findFirst().map(ForecastPeriod::getDescription).orElse("");
+
+        ForecastPeriod period = new ForecastPeriod();
+        period.setLabel(label);
+        period.setDateTime(filtered.get(0).getDateTime());
+        period.setTemperature(Math.round(avg * 10.0) / 10.0);
+        period.setDescription(desc);
+        period.setRain(rain);
+        period.setRainVolume(rainVolume);
+        result.add(period);
     }
 
     @SuppressWarnings("unchecked")
@@ -97,69 +120,40 @@ public class OpenWeatherMapAdapter implements WeatherProviderPort {
         return period;
     }
 
-    private String buildSummary(String city, String uf, List<ForecastPeriod> periods) {
+    private String buildSummary(String city, String uf, String currentDesc, double tempMin, double tempMax, boolean willRain, List<ForecastPeriod> periods) {
         StringBuilder sb = new StringBuilder();
         sb.append(String.format("🌤 Previsão do tempo - %s/%s\n", city, uf));
         sb.append(String.format("📅 %s\n", LocalDate.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))));
         sb.append("─────────────────────\n");
+        sb.append(String.format("🌡 Agora: %s\n", currentDesc));
 
-        buildPeriodSummary(sb, "🌅 Manhã (6h-12h)", periods, 6, 11);
-        buildPeriodSummary(sb, "☀️ Tarde (12h-18h)", periods, 12, 17);
-        buildPeriodSummary(sb, "🌙 Noite (18h-23h)", periods, 18, 23);
+        for (ForecastPeriod p : periods) {
+            sb.append(String.format("\n%s\n", p.getLabel()));
+            sb.append(String.format("  🌡 Média: %.0f°C\n", p.getTemperature()));
+            sb.append(String.format("  %s %s\n", p.isRain() ? "🌧" : "☁️", p.getDescription()));
+            if (p.isRain()) {
+                sb.append(String.format("  💧 Volume: %.1fmm\n", p.getRainVolume()));
+            }
+        }
 
         sb.append("─────────────────────\n");
+        sb.append(String.format("🌡 Mínima: %.0f°C | Máxima: %.0f°C\n", tempMin, tempMax));
 
-        double tempMin = periods.stream().mapToDouble(ForecastPeriod::getTemperature).min().orElse(0);
-        double tempMax = periods.stream().mapToDouble(ForecastPeriod::getTemperature).max().orElse(0);
-        sb.append(String.format("🌡 Geral: %.0f°C ~ %.0f°C\n", tempMin, tempMax));
-
-        boolean rainManha = hasRainInRange(periods, 6, 11);
-        boolean rainTarde = hasRainInRange(periods, 12, 17);
-        boolean rainNoite = hasRainInRange(periods, 18, 23);
-
-        if (rainManha || rainTarde || rainNoite) {
-            sb.append("🌧 Chuva prevista: ");
+        if (willRain) {
             List<String> rainyParts = new ArrayList<>();
-            if (rainManha) rainyParts.add("manhã");
-            if (rainTarde) rainyParts.add("tarde");
-            if (rainNoite) rainyParts.add("noite");
-            sb.append(String.join(", ", rainyParts)).append("\n");
+            for (ForecastPeriod p : periods) {
+                if (p.isRain()) rainyParts.add(p.getLabel().substring(2).trim().toLowerCase());
+            }
+            if (rainyParts.isEmpty()) {
+                sb.append("🌧 Chovendo agora!\n");
+            } else {
+                sb.append("🌧 Chuva prevista: ").append(String.join(", ", rainyParts)).append("\n");
+            }
             sb.append("☂️ Leve um guarda-chuva!");
         } else {
             sb.append("☀️ Sem previsão de chuva para hoje!");
         }
 
         return sb.toString();
-    }
-
-    private void buildPeriodSummary(StringBuilder sb, String label, List<ForecastPeriod> periods, int hourStart, int hourEnd) {
-        List<ForecastPeriod> filtered = periods.stream()
-                .filter(p -> p.getDateTime().getHour() >= hourStart && p.getDateTime().getHour() <= hourEnd)
-                .toList();
-
-        if (filtered.isEmpty()) {
-            sb.append(String.format("\n%s\n  Sem dados disponíveis\n", label));
-            return;
-        }
-
-        double avg = filtered.stream().mapToDouble(ForecastPeriod::getTemperature).average().orElse(0);
-        double min = filtered.stream().mapToDouble(ForecastPeriod::getTemperature).min().orElse(0);
-        double max = filtered.stream().mapToDouble(ForecastPeriod::getTemperature).max().orElse(0);
-        boolean rain = filtered.stream().anyMatch(ForecastPeriod::isRain);
-        String desc = filtered.stream().findFirst().map(ForecastPeriod::getDescription).orElse("");
-
-        sb.append(String.format("\n%s\n", label));
-        sb.append(String.format("  🌡 Média: %.0f°C (%.0f°C ~ %.0f°C)\n", avg, min, max));
-        sb.append(String.format("  %s %s\n", rain ? "🌧" : "☁️", desc));
-        if (rain) {
-            double volume = filtered.stream().mapToDouble(ForecastPeriod::getRainVolume).sum();
-            sb.append(String.format("  💧 Volume: %.1fmm\n", volume));
-        }
-    }
-
-    private boolean hasRainInRange(List<ForecastPeriod> periods, int hourStart, int hourEnd) {
-        return periods.stream()
-                .filter(p -> p.getDateTime().getHour() >= hourStart && p.getDateTime().getHour() <= hourEnd)
-                .anyMatch(ForecastPeriod::isRain);
     }
 }

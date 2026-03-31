@@ -4,3 +4,5 @@ data/
 *.trace.db
 .idea/
 *.iml
+.env
+application-local.yml

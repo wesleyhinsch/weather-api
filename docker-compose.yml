@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  weather-api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - OPENWEATHERMAP_API_KEY=${OPENWEATHERMAP_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
